@@ -3,13 +3,29 @@ import axios from "axios";
 import FormData from "form-data";
 
 export async function POST(req: Request) {
+  const allowedIps = process.env.ALLOWED_IPS
+  ? process.env.ALLOWED_IPS.split(",").map(ip => ip.trim())
+  : [];
+
+  const ipHeader = req.headers.get("x-forwarded-for");
+  const clientIp = ipHeader ? ipHeader.split(",")[0].trim() : "unknown";
+
+  if (!allowedIps.includes(clientIp)) {
+    console.log("Upload attempt from non-allowed IP:", clientIp);
+    return new Response(
+      JSON.stringify({
+        success: false,
+        message: "Uploads are temporarily disabled — feature under development.",
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } }
+    );
+  }
+
   try {
     const formData = await req.formData();
     const file = formData.get("file") as File;
-
-    if (!file) {
+    if (!file)
       return new Response("No file provided", { status: 400 });
-    }
 
     const BASE_URL = process.env.BACKEND_SERVICE_URL!;
     const credentials = JSON.parse(process.env.GCP_SERVICE_ACCOUNT_KEY!);
@@ -17,7 +33,6 @@ export async function POST(req: Request) {
     const client = await auth.getIdTokenClient(BASE_URL);
     const token = await client.idTokenProvider.fetchIdToken(BASE_URL);
 
-    // Build multipart/form-data body
     const cloudForm = new FormData();
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
@@ -28,11 +43,7 @@ export async function POST(req: Request) {
       Authorization: `Bearer ${token}`,
     };
 
-    const response = await axios.post(
-      `${BASE_URL}/ingest/upload`,
-      cloudForm,
-      { headers }
-    );
+    const response = await axios.post(`${BASE_URL}/ingest/upload`, cloudForm, { headers });
 
     return new Response(JSON.stringify(response.data), {
       status: response.status,
